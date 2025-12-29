@@ -98,7 +98,7 @@ class SnakeGame:
     def step(self, action):
         """
         Take a step in the game
-        action: 0=UP, 1=RIGHT, 2=DOWN, 3=LEFT
+        action: 0=STRAIGHT, 1=RIGHT, 2=LEFT (relative to current direction)
         Returns: (state, reward, done, info)
         """
         if self.game_over:
@@ -106,18 +106,25 @@ class SnakeGame:
         
         self.steps += 1
         
-        # Update direction based on action
-        # Prevent 180-degree turns
-        new_direction = Direction(action)
-        opposite = {
-            Direction.UP: Direction.DOWN,
-            Direction.DOWN: Direction.UP,
-            Direction.LEFT: Direction.RIGHT,
-            Direction.RIGHT: Direction.LEFT
-        }
-        
-        if new_direction != opposite.get(self.direction):
-            self.direction = new_direction
+        # Update direction based on relative action
+        # 0 = STRAIGHT (no change), 1 = turn RIGHT, 2 = turn LEFT
+        if action == 1:  # Turn right
+            turn_right = {
+                Direction.UP: Direction.RIGHT,
+                Direction.RIGHT: Direction.DOWN,
+                Direction.DOWN: Direction.LEFT,
+                Direction.LEFT: Direction.UP
+            }
+            self.direction = turn_right[self.direction]
+        elif action == 2:  # Turn left
+            turn_left = {
+                Direction.UP: Direction.LEFT,
+                Direction.LEFT: Direction.DOWN,
+                Direction.DOWN: Direction.RIGHT,
+                Direction.RIGHT: Direction.UP
+            }
+            self.direction = turn_left[self.direction]
+        # action == 0: continue straight, no direction change
         
         # Calculate new head position
         head_x, head_y = self.snake[0]
@@ -223,19 +230,19 @@ class SnakeGame:
         pygame.display.flip()
     
     def handle_events(self):
-        """Handle pygame events for manual play"""
+        """Handle pygame events for manual play
+        Returns: 0=STRAIGHT, 1=RIGHT, 2=LEFT, False=quit, None=no input
+        """
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
             if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_UP:
-                    return Direction.UP.value
-                elif event.key == pygame.K_DOWN:
-                    return Direction.DOWN.value
-                elif event.key == pygame.K_LEFT:
-                    return Direction.LEFT.value
-                elif event.key == pygame.K_RIGHT:
-                    return Direction.RIGHT.value
+                if event.key == pygame.K_UP or event.key == pygame.K_w:
+                    return 0  # STRAIGHT
+                elif event.key == pygame.K_RIGHT or event.key == pygame.K_d:
+                    return 1  # Turn RIGHT
+                elif event.key == pygame.K_LEFT or event.key == pygame.K_a:
+                    return 2  # Turn LEFT
         return None
     
     def close(self):
@@ -245,12 +252,16 @@ class SnakeGame:
 
 
 def play_manual():
-    """Play the game manually"""
+    """Play the game manually
+    Controls: UP/W = go straight, RIGHT/D = turn right, LEFT/A = turn left
+    """
     game = SnakeGame(render_mode=True)
     game.reset()
     
+    print("Controls: UP/W = go straight, RIGHT/D = turn right, LEFT/A = turn left")
+    
     running = True
-    action = Direction.RIGHT.value
+    action = 0  # Default: go straight
     
     while running:
         # Handle events
@@ -260,6 +271,8 @@ def play_manual():
             continue
         elif result is not None:
             action = result
+        else:
+            action = 0  # Default to straight if no input
         
         # Take step
         state, reward, done, info = game.step(action)
@@ -267,7 +280,6 @@ def play_manual():
         if done:
             print(f"Game Over! Score: {info['score']}, Reason: {info.get('reason', 'unknown')}")
             game.reset()
-            action = Direction.RIGHT.value
         
         game.render()
         game.clock.tick(8)  # 8 FPS for playability

@@ -1,7 +1,7 @@
 """
 Neural Network for Snake RL Agent using GRPO
 Input: 100 values (10x10 grid state)
-Output: 4 action probabilities (UP, RIGHT, DOWN, LEFT)
+Output: 3 action probabilities (UP, RIGHT, LEFT)
 """
 import torch
 import torch.nn as nn
@@ -14,7 +14,7 @@ class SnakeNet(nn.Module):
     Policy network for Snake game
     Uses a simple MLP architecture suitable for the 10x10 grid input
     """
-    def __init__(self, input_size=100, hidden_size=256, output_size=4):
+    def __init__(self, input_size=100, hidden_size=256, output_size=3):
         super(SnakeNet, self).__init__()
         
         self.input_size = input_size
@@ -47,7 +47,7 @@ class SnakeNet(nn.Module):
         """
         Forward pass
         x: batch of states, shape (batch_size, 100)
-        Returns: action logits, shape (batch_size, 4)
+        Returns: action logits, shape (batch_size, 3)
         """
         x = F.relu(self.ln1(self.fc1(x)))
         x = F.relu(self.ln2(self.fc2(x)))

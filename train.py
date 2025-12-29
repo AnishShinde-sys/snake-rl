@@ -98,7 +98,7 @@ def train(args):
         model = SnakeNet.load(args.load, device=device)
     else:
         print("Initializing new model")
-        model = SnakeNet(input_size=100, hidden_size=256, output_size=4)
+        model = SnakeNet(input_size=100, hidden_size=256, output_size=3)
         model.to(device)
     
     # Initialize trainer

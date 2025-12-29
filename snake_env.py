@@ -16,11 +16,10 @@ class SnakeEnv:
         - 2 = snake head
         - 3 = food
     
-    Action Space: 4 discrete actions
-        - 0 = UP
-        - 1 = RIGHT
-        - 2 = DOWN
-        - 3 = LEFT
+    Action Space: 3 discrete actions (relative to current direction)
+        - 0 = STRAIGHT (continue forward)
+        - 1 = RIGHT (turn right)
+        - 2 = LEFT (turn left)
     
     Reward Structure:
         - +10 for eating food
@@ -42,7 +41,7 @@ class SnakeEnv:
         
         # Environment properties
         self.observation_space_size = 100  # 10x10 grid
-        self.action_space_size = 4  # UP, RIGHT, DOWN, LEFT
+        self.action_space_size = 3  # STRAIGHT, RIGHT, LEFT
         self.grid_size = 10
     
     def reset(self):
@@ -55,7 +54,8 @@ class SnakeEnv:
         Take a step in the environment
         
         Args:
-            action: int in [0, 3] representing direction
+            action: int in [0, 2] representing relative direction
+                    0 = STRAIGHT, 1 = RIGHT, 2 = LEFT
         
         Returns:
             state: numpy array of shape (100,)
@@ -79,32 +79,46 @@ class SnakeEnv:
         """
         Get list of actions that won't immediately cause collision
         This can be used for action masking if needed
+        Actions: 0=STRAIGHT, 1=RIGHT, 2=LEFT (relative to current direction)
         """
         valid = []
         head_x, head_y = self.game.snake[0]
+        current_dir = self.game.direction
         
-        # Check each direction
-        directions = {
-            0: (head_x, head_y - 1),  # UP
-            1: (head_x + 1, head_y),  # RIGHT
-            2: (head_x, head_y + 1),  # DOWN
-            3: (head_x - 1, head_y),  # LEFT
+        # Map relative actions to absolute positions
+        # For each relative action, compute what the new head position would be
+        turn_right = {
+            Direction.UP: Direction.RIGHT,
+            Direction.RIGHT: Direction.DOWN,
+            Direction.DOWN: Direction.LEFT,
+            Direction.LEFT: Direction.UP
+        }
+        turn_left = {
+            Direction.UP: Direction.LEFT,
+            Direction.LEFT: Direction.DOWN,
+            Direction.DOWN: Direction.RIGHT,
+            Direction.RIGHT: Direction.UP
         }
         
-        # Current direction's opposite
-        opposite = {
-            Direction.UP: Direction.DOWN,
-            Direction.DOWN: Direction.UP,
-            Direction.LEFT: Direction.RIGHT,
-            Direction.RIGHT: Direction.LEFT
+        # Compute new positions for each relative action
+        def get_new_pos(direction):
+            if direction == Direction.UP:
+                return (head_x, head_y - 1)
+            elif direction == Direction.DOWN:
+                return (head_x, head_y + 1)
+            elif direction == Direction.LEFT:
+                return (head_x - 1, head_y)
+            else:  # RIGHT
+                return (head_x + 1, head_y)
+        
+        actions_to_check = {
+            0: current_dir,  # STRAIGHT
+            1: turn_right[current_dir],  # RIGHT
+            2: turn_left[current_dir],  # LEFT
         }
         
-        current_opposite = opposite[self.game.direction].value
-        
-        for action, (nx, ny) in directions.items():
-            # Skip 180-degree turn (will be ignored anyway)
-            if action == current_opposite:
-                continue
+        for action, new_dir in actions_to_check.items():
+            nx, ny = get_new_pos(new_dir)
             
             # Check bounds
             if nx < 0 or nx >= self.grid_size or ny < 0 or ny >= self.grid_size:
@@ -120,7 +134,7 @@ class SnakeEnv:
             
             valid.append(action)
         
-        return valid if valid else list(range(4))  # Return all if none valid
+        return valid if valid else list(range(3))  # Return all if none valid
     
     def get_state_features(self):
         """
@@ -185,8 +199,8 @@ def test_env():
         if done:
             break
         
-        # Random action
-        action = np.random.randint(0, 4)
+        # Random action (0=STRAIGHT, 1=RIGHT, 2=LEFT)
+        action = np.random.randint(0, 3)
         
         state, reward, done, info = env.step(action)
         total_reward += reward
