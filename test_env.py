@@ -15,7 +15,7 @@ def test_environment():
     # Test reset
     state = env.reset()
     print(f"\n✓ Reset works. State shape: {state.shape}")
-    assert state.shape == (31,), f"Expected state shape (31,), got {state.shape}"
+    assert state.shape == (35,), f"Expected state shape (35,), got {state.shape}"
     
     # Explain state features
     print("\n--- State Feature Breakdown ---")
@@ -33,22 +33,25 @@ def test_environment():
     print(f"Food distance (dx, dy) [11-12]: {state[idx:idx+2]}")
     idx += 2
     
-    print(f"Depth to obstacle [13-16]:   {state[idx:idx+4]}")
+    print(f"Distance to wall [13-16]:   {state[idx:idx+4]}")
     idx += 4
     
-    print(f"Action preview - would die [17-20]: {state[idx:idx+4]}")
+    print(f"Depth to obstacle [17-20]:   {state[idx:idx+4]}")
     idx += 4
     
-    print(f"Action preview - would eat [21-24]: {state[idx:idx+4]}")
+    print(f"Action preview - would die [21-24]: {state[idx:idx+4]}")
     idx += 4
     
-    print(f"Action preview - dist change [25-28]: {state[idx:idx+4]}")
+    print(f"Action preview - would eat [25-28]: {state[idx:idx+4]}")
     idx += 4
     
-    print(f"Snake length (normalized) [29]: {state[idx]:.3f}")
+    print(f"Action preview - dist change [29-32]: {state[idx:idx+4]}")
+    idx += 4
+    
+    print(f"Snake length (normalized) [33]: {state[idx]:.3f}")
     idx += 1
     
-    print(f"Adjacent body segments [30]: {state[idx]:.3f}")
+    print(f"Adjacent body segments [34]: {state[idx]:.3f}")
     
     # Test step
     print("\n--- Testing Steps ---")
@@ -64,7 +67,7 @@ def test_environment():
     for _ in range(100):
         # Use action preview to make "smart" random choices
         # Avoid actions that would cause death
-        would_die = state[17:21]  # Action preview - would die
+        would_die = state[21:25]  # Action preview - would die
         
         # Find safe actions
         safe_actions = [i for i in range(4) if would_die[i] == 0]
@@ -113,10 +116,11 @@ def test_environment():
     print("  - 3 relative danger features (straight/right/left)")
     print("  - 4 food direction features")
     print("  - 2 food distance features (normalized)")
-    print("  - 4 depth perception features")
+    print("  - 4 distance to wall features (explicit wall distance)")
+    print("  - 4 depth to obstacle features (wall or body)")
     print("  - 12 action preview features (4 actions × 3 outcomes)")
     print("  - 2 snake state features (length, adjacent body)")
-    print("  Total: 31 features")
+    print("  Total: 35 features")
 
 if __name__ == "__main__":
     test_environment()

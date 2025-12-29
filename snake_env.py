@@ -24,14 +24,15 @@ class SnakeEnv:
         # 3: danger straight/right/left (relative to current direction)
         # 4: food direction (up/right/down/left)
         # 2: normalized food distance (dx, dy)
-        # 4: depth to obstacle in each direction
+        # 4: distance to wall in each direction
+        # 4: depth to obstacle in each direction (wall or body)
         # 4: action preview - would die for each action
         # 4: action preview - would eat for each action  
         # 4: action preview - distance change for each action
         # 1: normalized snake length
         # 1: body segments adjacent to head
-        # Total: 31 features
-        self.observation_space = 31
+        # Total: 35 features
+        self.observation_space = 35
         
         if self.render_mode:
             pygame.init()
@@ -102,6 +103,48 @@ class SnakeEnv:
         # Normalize by grid size
         return distance / self.grid_size
     
+    def _get_wall_distance(self, start_pos, direction_idx):
+        """Get distance to wall in a direction (normalized 0-1)"""
+        dx, dy = self.DIRECTIONS[direction_idx]
+        x, y = start_pos
+        distance = 0
+        
+        while True:
+            x += dx
+            y += dy
+            distance += 1
+            
+            # Check for wall only
+            if x < 0 or x >= self.grid_size or y < 0 or y >= self.grid_size:
+                break
+        
+        # Normalize by grid size
+        return distance / self.grid_size
+    
+    def _get_body_distance(self, start_pos, direction_idx):
+        """Get distance to nearest body segment in a direction (normalized 0-1)"""
+        dx, dy = self.DIRECTIONS[direction_idx]
+        x, y = start_pos
+        distance = 0
+        max_distance = self.grid_size  # Default if no body found
+        
+        while True:
+            x += dx
+            y += dy
+            distance += 1
+            
+            # Check for wall first
+            if x < 0 or x >= self.grid_size or y < 0 or y >= self.grid_size:
+                max_distance = distance - 1  # Wall reached before body
+                break
+            # Check for body
+            if (x, y) in self.snake:
+                max_distance = distance - 1
+                break
+        
+        # Normalize by grid size
+        return max_distance / self.grid_size
+    
     def _get_next_pos(self, action):
         """Get the position after taking an action"""
         head = self.snake[0]
@@ -133,14 +176,15 @@ class SnakeEnv:
         - Danger relative (3): straight, right, left from current direction
         - Food direction (4): is food up/right/down/left
         - Food distance (2): normalized dx, dy to food
-        - Depth to obstacle (4): in each absolute direction
+        - Distance to wall (4): in each absolute direction
+        - Depth to obstacle (4): nearest obstacle (wall or body) in each direction
         - Action preview - would die (4): for each action
         - Action preview - would eat (4): for each action
         - Action preview - distance change (4): for each action
         - Snake length (1): normalized
         - Adjacent body count (1): body segments next to head
         
-        Total: 31 features
+        Total: 35 features
         """
         head = self.snake[0]
         features = []
@@ -170,7 +214,12 @@ class SnakeEnv:
         food_dy = (self.food[1] - head[1]) / self.grid_size
         features.extend([food_dx, food_dy])
         
-        # 5. Depth to obstacle in each direction (4 features)
+        # 5. Distance to wall in each direction (4 features)
+        for direction_idx in range(4):
+            wall_dist = self._get_wall_distance(head, direction_idx)
+            features.append(wall_dist)
+        
+        # 6. Depth to obstacle in each direction (4 features) - includes both wall and body
         for direction_idx in range(4):
             depth = self._get_depth(head, direction_idx)
             features.append(depth)
