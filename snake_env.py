@@ -265,7 +265,7 @@ class SnakeEnv:
         # Check if food eaten
         if new_head == self.food:
             self.score += 1
-            reward = 10
+            reward = 50  # High reward for eating food
             self.food = self._place_food()
         else:
             # Remove tail if no food eaten
