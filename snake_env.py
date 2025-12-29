@@ -1,221 +1,184 @@
-"""
-Snake RL Environment
-Wraps the snake game for reinforcement learning
-"""
 import numpy as np
-from snake_game import SnakeGame, Direction
+import pygame
+import random
+from collections import deque
 
 
 class SnakeEnv:
-    """
-    RL Environment wrapper for the Snake game
+    """Snake game environment for reinforcement learning"""
     
-    State Space: 100 values (10x10 grid)
-        - 0 = empty
-        - 1 = snake body
-        - 2 = snake head
-        - 3 = food
-    
-    Action Space: 3 discrete actions (relative to current direction)
-        - 0 = STRAIGHT (continue forward)
-        - 1 = RIGHT (turn right)
-        - 2 = LEFT (turn left)
-    
-    Reward Structure:
-        - +10 for eating food
-        - -10 for collision (wall or self)
-        - -5 for timeout (prevents infinite loops)
-        - -0.01 per step (encourages efficiency)
-        - +100 for winning (filling entire grid)
-    
-    Handling self-collision and trapped states:
-        The agent learns to avoid these through negative rewards.
-        GRPO helps by comparing trajectories - actions that lead to
-        collisions will have lower returns compared to the group,
-        resulting in decreased probability.
-    """
-    
-    def __init__(self, render_mode=False):
-        self.game = SnakeGame(render_mode=render_mode)
+    def __init__(self, grid_size=10, render_mode=False):
+        self.grid_size = grid_size
         self.render_mode = render_mode
+        self.cell_size = 50
+        self.window_size = self.grid_size * self.cell_size
         
-        # Environment properties
-        self.observation_space_size = 100  # 10x10 grid
-        self.action_space_size = 3  # STRAIGHT, RIGHT, LEFT
-        self.grid_size = 10
+        # Action space: 0=UP, 1=RIGHT, 2=DOWN, 3=LEFT
+        self.action_space = 4
+        # State space: 10x10 grid = 100 features
+        self.observation_space = grid_size * grid_size
+        
+        if self.render_mode:
+            pygame.init()
+            self.screen = pygame.display.set_mode((self.window_size, self.window_size))
+            pygame.display.set_caption("Snake RL")
+            self.clock = pygame.time.Clock()
+        else:
+            self.screen = None
+            self.clock = None
+            
+        self.reset()
     
     def reset(self):
-        """Reset the environment and return initial state"""
-        state = self.game.reset()
-        return np.array(state, dtype=np.float32)
+        """Reset the game to initial state"""
+        # Start snake in the middle
+        self.snake = deque([(self.grid_size // 2, self.grid_size // 2)])
+        self.direction = 1  # Start moving right
+        self.food = self._place_food()
+        self.score = 0
+        self.steps = 0
+        self.max_steps = self.grid_size * self.grid_size * 10  # Prevent infinite loops
+        return self._get_state()
+    
+    def _place_food(self):
+        """Place food at random empty position"""
+        while True:
+            food = (random.randint(0, self.grid_size - 1), 
+                   random.randint(0, self.grid_size - 1))
+            if food not in self.snake:
+                return food
+    
+    def _get_state(self):
+        """
+        Get current state as 100-dimensional vector (10x10 grid)
+        0 = empty, 1 = snake body, 2 = snake head, 3 = food
+        """
+        state = np.zeros((self.grid_size, self.grid_size), dtype=np.float32)
+        
+        # Mark snake body
+        for pos in list(self.snake)[1:]:
+            if 0 <= pos[0] < self.grid_size and 0 <= pos[1] < self.grid_size:
+                state[pos[1], pos[0]] = 1
+        
+        # Mark snake head
+        head = self.snake[0]
+        if 0 <= head[0] < self.grid_size and 0 <= head[1] < self.grid_size:
+            state[head[1], head[0]] = 2
+        
+        # Mark food
+        state[self.food[1], self.food[0]] = 3
+        
+        return state.flatten()
     
     def step(self, action):
         """
-        Take a step in the environment
-        
-        Args:
-            action: int in [0, 2] representing relative direction
-                    0 = STRAIGHT, 1 = RIGHT, 2 = LEFT
-        
-        Returns:
-            state: numpy array of shape (100,)
-            reward: float
-            done: bool
-            info: dict with additional info
+        Take action and return (state, reward, done, info)
+        Actions: 0=UP, 1=RIGHT, 2=DOWN, 3=LEFT
         """
-        state, reward, done, info = self.game.step(action)
-        return np.array(state, dtype=np.float32), reward, done, info
+        self.steps += 1
+        
+        # Prevent 180-degree turns
+        if (action == 0 and self.direction == 2) or \
+           (action == 2 and self.direction == 0) or \
+           (action == 1 and self.direction == 3) or \
+           (action == 3 and self.direction == 1):
+            action = self.direction
+        
+        self.direction = action
+        
+        # Calculate new head position
+        head = self.snake[0]
+        if action == 0:  # UP
+            new_head = (head[0], head[1] - 1)
+        elif action == 1:  # RIGHT
+            new_head = (head[0] + 1, head[1])
+        elif action == 2:  # DOWN
+            new_head = (head[0], head[1] + 1)
+        else:  # LEFT (action == 3)
+            new_head = (head[0] - 1, head[1])
+        
+        # Check for collisions
+        done = False
+        reward = 0
+        
+        # Wall collision
+        if (new_head[0] < 0 or new_head[0] >= self.grid_size or 
+            new_head[1] < 0 or new_head[1] >= self.grid_size):
+            done = True
+            reward = -10
+            return self._get_state(), reward, done, {"score": self.score, "reason": "wall"}
+        
+        # Self collision
+        if new_head in self.snake:
+            done = True
+            reward = -10
+            return self._get_state(), reward, done, {"score": self.score, "reason": "self"}
+        
+        # Move snake
+        self.snake.appendleft(new_head)
+        
+        # Check if food eaten
+        if new_head == self.food:
+            self.score += 1
+            reward = 10
+            self.food = self._place_food()
+        else:
+            # Remove tail if no food eaten
+            self.snake.pop()
+            # Small reward for surviving
+            reward = 0.1
+        
+        # Check if max steps reached (stuck in loop)
+        if self.steps >= self.max_steps:
+            done = True
+            reward = -5
+            return self._get_state(), reward, done, {"score": self.score, "reason": "timeout"}
+        
+        return self._get_state(), reward, done, {"score": self.score}
     
     def render(self):
-        """Render the current state"""
-        if self.render_mode:
-            self.game.render()
-    
-    def close(self):
-        """Clean up resources"""
-        self.game.close()
-    
-    def get_valid_actions(self):
-        """
-        Get list of actions that won't immediately cause collision
-        This can be used for action masking if needed
-        Actions: 0=STRAIGHT, 1=RIGHT, 2=LEFT (relative to current direction)
-        """
-        valid = []
-        head_x, head_y = self.game.snake[0]
-        current_dir = self.game.direction
+        """Render the game if render_mode is True"""
+        if not self.render_mode or self.screen is None:
+            return
         
-        # Map relative actions to absolute positions
-        # For each relative action, compute what the new head position would be
-        turn_right = {
-            Direction.UP: Direction.RIGHT,
-            Direction.RIGHT: Direction.DOWN,
-            Direction.DOWN: Direction.LEFT,
-            Direction.LEFT: Direction.UP
-        }
-        turn_left = {
-            Direction.UP: Direction.LEFT,
-            Direction.LEFT: Direction.DOWN,
-            Direction.DOWN: Direction.RIGHT,
-            Direction.RIGHT: Direction.UP
-        }
-        
-        # Compute new positions for each relative action
-        def get_new_pos(direction):
-            if direction == Direction.UP:
-                return (head_x, head_y - 1)
-            elif direction == Direction.DOWN:
-                return (head_x, head_y + 1)
-            elif direction == Direction.LEFT:
-                return (head_x - 1, head_y)
-            else:  # RIGHT
-                return (head_x + 1, head_y)
-        
-        actions_to_check = {
-            0: current_dir,  # STRAIGHT
-            1: turn_right[current_dir],  # RIGHT
-            2: turn_left[current_dir],  # LEFT
-        }
-        
-        for action, new_dir in actions_to_check.items():
-            nx, ny = get_new_pos(new_dir)
-            
-            # Check bounds
-            if nx < 0 or nx >= self.grid_size or ny < 0 or ny >= self.grid_size:
-                continue
-            
-            # Check self-collision (exclude tail as it will move)
-            snake_body = list(self.game.snake)
-            if len(snake_body) > 1:
-                snake_body = snake_body[:-1]  # Exclude tail
-            
-            if (nx, ny) in snake_body:
-                continue
-            
-            valid.append(action)
-        
-        return valid if valid else list(range(3))  # Return all if none valid
-    
-    def get_state_features(self):
-        """
-        Get additional state features that might be useful
-        Returns dict with computed features
-        """
-        head_x, head_y = self.game.snake[0]
-        food_x, food_y = self.game.food if self.game.food else (0, 0)
-        
-        # Distance to food (Manhattan)
-        food_dist = abs(head_x - food_x) + abs(head_y - food_y)
-        
-        # Distance to walls
-        dist_to_walls = {
-            'up': head_y,
-            'down': self.grid_size - 1 - head_y,
-            'left': head_x,
-            'right': self.grid_size - 1 - head_x
-        }
-        
-        # Snake length
-        snake_length = len(self.game.snake)
-        
-        # Direction to food
-        food_dir = {
-            'up': food_y < head_y,
-            'down': food_y > head_y,
-            'left': food_x < head_x,
-            'right': food_x > head_x
-        }
-        
-        return {
-            'food_distance': food_dist,
-            'dist_to_walls': dist_to_walls,
-            'snake_length': snake_length,
-            'food_direction': food_dir,
-            'valid_actions': self.get_valid_actions()
-        }
-
-
-def test_env():
-    """Test the environment"""
-    env = SnakeEnv(render_mode=True)
-    
-    state = env.reset()
-    print(f"Initial state shape: {state.shape}")
-    print(f"State: {state.reshape(10, 10)}")
-    
-    done = False
-    total_reward = 0
-    steps = 0
-    
-    import pygame
-    
-    while not done:
         # Handle pygame events
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                done = True
-                break
+                pygame.quit()
+                return
         
-        if done:
-            break
+        # Clear screen
+        self.screen.fill((0, 0, 0))
         
-        # Random action (0=STRAIGHT, 1=RIGHT, 2=LEFT)
-        action = np.random.randint(0, 3)
+        # Draw grid
+        for x in range(self.grid_size):
+            for y in range(self.grid_size):
+                rect = pygame.Rect(x * self.cell_size, y * self.cell_size, 
+                                  self.cell_size - 2, self.cell_size - 2)
+                pygame.draw.rect(self.screen, (40, 40, 40), rect)
         
-        state, reward, done, info = env.step(action)
-        total_reward += reward
-        steps += 1
+        # Draw snake
+        for i, pos in enumerate(self.snake):
+            rect = pygame.Rect(pos[0] * self.cell_size, pos[1] * self.cell_size,
+                             self.cell_size - 2, self.cell_size - 2)
+            if i == 0:
+                # Head
+                pygame.draw.rect(self.screen, (0, 255, 0), rect)
+            else:
+                # Body
+                pygame.draw.rect(self.screen, (0, 200, 0), rect)
         
-        env.render()
-        pygame.time.delay(100)
+        # Draw food
+        food_rect = pygame.Rect(self.food[0] * self.cell_size, self.food[1] * self.cell_size,
+                               self.cell_size - 2, self.cell_size - 2)
+        pygame.draw.rect(self.screen, (255, 0, 0), food_rect)
         
-        if done:
-            print(f"Episode ended: {info}")
-            print(f"Total reward: {total_reward}, Steps: {steps}")
+        pygame.display.flip()
+        if self.clock:
+            self.clock.tick(10)  # 10 FPS for rendering
     
-    env.close()
-
-
-if __name__ == '__main__':
-    test_env()
+    def close(self):
+        """Close the environment"""
+        if self.render_mode and pygame.get_init():
+            pygame.quit()
 

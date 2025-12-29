@@ -1,273 +1,212 @@
-#!/usr/bin/env python3
-"""
-Snake RL Training Script with GRPO
-
-Features:
-- TensorBoard logging for all metrics
-- --render flag to visualize training
-- --load flag to load existing model weights
-- Graceful SIGINT handling (Ctrl+C) to save model before exit
-
-Usage:
-    python train.py                    # Train from scratch, no rendering
-    python train.py --render           # Train with game visualization
-    python train.py --load weights.pt  # Continue training from checkpoint
-    python train.py --render --load weights.pt
-"""
 import argparse
 import signal
 import sys
 import os
-from datetime import datetime
-
 import torch
-from torch.utils.tensorboard import SummaryWriter
-
+import numpy as np
+from datetime import datetime
 from snake_env import SnakeEnv
-from model import SnakeNet, GRPOTrainer
+from ppo_agent import PPOAgent
 
 
-# Global flag for graceful shutdown
-shutdown_requested = False
-
-
-def signal_handler(signum, frame):
-    """Handle SIGINT (Ctrl+C) for graceful shutdown"""
-    global shutdown_requested
-    print("\n[SIGINT] Shutdown requested. Finishing current episode and saving model...")
-    shutdown_requested = True
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description='Train Snake RL Agent with GRPO')
-    parser.add_argument('--render', action='store_true',
-                        help='Render the game during training')
-    parser.add_argument('--load', type=str, default=None,
-                        help='Path to model weights to load')
-    parser.add_argument('--episodes', type=int, default=10000,
-                        help='Number of episodes to train (default: 10000)')
-    parser.add_argument('--lr', type=float, default=3e-4,
-                        help='Learning rate (default: 3e-4)')
-    parser.add_argument('--group-size', type=int, default=8,
-                        help='GRPO group size (default: 8)')
-    parser.add_argument('--gamma', type=float, default=0.99,
-                        help='Discount factor (default: 0.99)')
-    parser.add_argument('--save-dir', type=str, default='checkpoints',
-                        help='Directory to save model checkpoints')
-    parser.add_argument('--log-dir', type=str, default='logs',
-                        help='Directory for TensorBoard logs')
-    parser.add_argument('--save-interval', type=int, default=100,
-                        help='Save model every N episodes (default: 100)')
-    parser.add_argument('--device', type=str, default='auto',
-                        help='Device to use: cpu, cuda, mps, or auto (default: auto)')
-    return parser.parse_args()
-
-
-def get_device(device_arg):
-    """Get the best available device"""
-    if device_arg == 'auto':
-        if torch.cuda.is_available():
-            return 'cuda'
-        elif torch.backends.mps.is_available():
-            return 'mps'
-        else:
-            return 'cpu'
-    return device_arg
-
-
-def train(args):
-    global shutdown_requested
+class Trainer:
+    """Main training class with logging and graceful shutdown"""
     
-    # Set up signal handler
-    signal.signal(signal.SIGINT, signal_handler)
-    
-    # Get device
-    device = get_device(args.device)
-    print(f"Using device: {device}")
-    
-    # Create directories
-    os.makedirs(args.save_dir, exist_ok=True)
-    os.makedirs(args.log_dir, exist_ok=True)
-    
-    # Initialize environment
-    env = SnakeEnv(render_mode=args.render)
-    
-    # Initialize or load model
-    if args.load and os.path.exists(args.load):
-        print(f"Loading model from {args.load}")
-        model = SnakeNet.load(args.load, device=device)
-    else:
-        print("Initializing new model")
-        model = SnakeNet(input_size=100, hidden_size=256, output_size=3)
-        model.to(device)
-    
-    # Initialize trainer
-    trainer = GRPOTrainer(
-        model=model,
-        lr=args.lr,
-        gamma=args.gamma,
-        group_size=args.group_size,
-        device=device
-    )
-    
-    # Set up TensorBoard
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    writer = SummaryWriter(os.path.join(args.log_dir, f'snake_rl_{timestamp}'))
-    
-    # Training metrics
-    episode_count = 0
-    total_steps = 0
-    best_score = 0
-    
-    # Rolling averages
-    recent_scores = []
-    recent_rewards = []
-    recent_lengths = []
-    window_size = 100
-    
-    # Death reason tracking
-    death_reasons = {'wall': 0, 'self': 0, 'timeout': 0, 'win': 0, 'unknown': 0}
-    
-    print(f"\nStarting training...")
-    print(f"Episodes: {args.episodes}")
-    print(f"Group size: {args.group_size}")
-    print(f"Learning rate: {args.lr}")
-    print(f"Rendering: {args.render}")
-    print(f"Press Ctrl+C to stop and save model\n")
-    
-    try:
-        while episode_count < args.episodes and not shutdown_requested:
-            # Collect group of trajectories
-            group = trainer.collect_group(env, render_fn=env.render if args.render else None)
-            
-            # Update policy
-            loss, entropy = trainer.update(group)
-            
-            # Log metrics for each trajectory in the group
-            for traj in group:
-                episode_count += 1
-                total_steps += traj['length']
-                
-                # Track scores
-                score = traj['score']
-                total_reward = traj['total_reward']
-                ep_length = traj['length']
-                reason = traj['reason']
-                
-                recent_scores.append(score)
-                recent_rewards.append(total_reward)
-                recent_lengths.append(ep_length)
-                
-                # Keep rolling window
-                if len(recent_scores) > window_size:
-                    recent_scores.pop(0)
-                    recent_rewards.pop(0)
-                    recent_lengths.pop(0)
-                
-                # Track death reasons
-                death_reasons[reason] = death_reasons.get(reason, 0) + 1
-                
-                # Update best score
-                if score > best_score:
-                    best_score = score
-                    # Save best model
-                    best_path = os.path.join(args.save_dir, 'best_model.pt')
-                    model.save(best_path)
-                
-                # Log to TensorBoard
-                writer.add_scalar('Episode/Score', score, episode_count)
-                writer.add_scalar('Episode/TotalReward', total_reward, episode_count)
-                writer.add_scalar('Episode/Length', ep_length, episode_count)
-                writer.add_scalar('Episode/BestScore', best_score, episode_count)
-                
-                # Log rolling averages
-                if len(recent_scores) >= 10:
-                    avg_score = sum(recent_scores) / len(recent_scores)
-                    avg_reward = sum(recent_rewards) / len(recent_rewards)
-                    avg_length = sum(recent_lengths) / len(recent_lengths)
-                    
-                    writer.add_scalar('Average/Score', avg_score, episode_count)
-                    writer.add_scalar('Average/Reward', avg_reward, episode_count)
-                    writer.add_scalar('Average/Length', avg_length, episode_count)
-                
-                # Log death reasons periodically
-                if episode_count % 10 == 0:
-                    total_deaths = sum(death_reasons.values())
-                    if total_deaths > 0:
-                        for reason_name, count in death_reasons.items():
-                            writer.add_scalar(f'DeathReason/{reason_name}', 
-                                            count / total_deaths * 100, episode_count)
-                
-                # Print progress
-                if episode_count % 10 == 0:
-                    avg_score_str = f"{sum(recent_scores)/len(recent_scores):.2f}" if recent_scores else "N/A"
-                    print(f"Episode {episode_count}/{args.episodes} | "
-                          f"Score: {score} | Best: {best_score} | "
-                          f"Avg(100): {avg_score_str} | "
-                          f"Loss: {loss:.4f} | Entropy: {entropy:.4f}")
-            
-            # Log training metrics
-            writer.add_scalar('Training/Loss', loss, episode_count)
-            writer.add_scalar('Training/Entropy', entropy, episode_count)
-            writer.add_scalar('Training/TotalSteps', total_steps, episode_count)
-            
-            # Periodic save
-            if episode_count % args.save_interval == 0:
-                checkpoint_path = os.path.join(args.save_dir, f'checkpoint_ep{episode_count}.pt')
-                model.save(checkpoint_path)
-                
-                # Also save latest
-                latest_path = os.path.join(args.save_dir, 'latest_model.pt')
-                model.save(latest_path)
-            
-            # Handle rendering events
-            if args.render:
-                import pygame
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        shutdown_requested = True
-    
-    except Exception as e:
-        print(f"\nError during training: {e}")
-        raise
-    
-    finally:
-        # Save final model
-        print("\nSaving final model...")
-        final_path = os.path.join(args.save_dir, 'final_model.pt')
-        model.save(final_path)
+    def __init__(self, render=False, load_model=None, max_episodes=10000, 
+                 update_timestep=2000, save_interval=100):
+        self.render = render
+        self.max_episodes = max_episodes
+        self.update_timestep = update_timestep
+        self.save_interval = save_interval
+        self.should_exit = False
         
+        # Setup signal handler for graceful shutdown
+        signal.signal(signal.SIGINT, self.signal_handler)
+        
+        # Create environment
+        self.env = SnakeEnv(grid_size=10, render_mode=render)
+        
+        # Setup device
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Using device: {self.device}")
+        
+        # Create agent
+        state_dim = self.env.observation_space
+        action_dim = self.env.action_space
+        self.agent = PPOAgent(state_dim, action_dim, device=self.device)
+        
+        # Load model if specified
+        if load_model:
+            if os.path.exists(load_model):
+                print(f"Loading model from {load_model}")
+                self.agent.load(load_model)
+            else:
+                print(f"Warning: Model file {load_model} not found. Starting fresh.")
+        
+        # Create checkpoint directory
+        os.makedirs("checkpoints", exist_ok=True)
+        
+        # Training stats
+        self.episode_rewards = []
+        self.episode_scores = []
+        self.timestep = 0
+        self.start_time = datetime.now()
+    
+    def signal_handler(self, sig, frame):
+        """Handle SIGINT (Ctrl+C) for graceful shutdown"""
+        print("\n\n[SIGINT] Received interrupt signal. Saving model and exiting gracefully...")
+        self.should_exit = True
+    
+    def save_model(self, episode, prefix="episode"):
+        """Save model checkpoint"""
+        filepath = f"checkpoints/{prefix}_{episode}.pt"
+        self.agent.save(filepath)
         # Also save as latest
-        latest_path = os.path.join(args.save_dir, 'latest_model.pt')
-        model.save(latest_path)
+        latest_path = "checkpoints/latest_model.pt"
+        self.agent.save(latest_path)
+        print(f"Model saved to {filepath}")
+    
+    def log_episode(self, episode, score, reward, steps, reason=""):
+        """Log episode statistics"""
+        avg_reward = np.mean(self.episode_rewards[-100:]) if self.episode_rewards else 0
+        avg_score = np.mean(self.episode_scores[-100:]) if self.episode_scores else 0
         
-        # Log final stats
-        print(f"\n{'='*50}")
-        print(f"Training Complete!")
-        print(f"{'='*50}")
-        print(f"Total Episodes: {episode_count}")
-        print(f"Total Steps: {total_steps}")
-        print(f"Best Score: {best_score}")
-        print(f"Final Avg Score (last 100): {sum(recent_scores)/len(recent_scores):.2f}" if recent_scores else "N/A")
-        print(f"\nDeath Reasons:")
-        total_deaths = sum(death_reasons.values())
-        for reason, count in death_reasons.items():
-            pct = count / total_deaths * 100 if total_deaths > 0 else 0
-            print(f"  {reason}: {count} ({pct:.1f}%)")
-        print(f"\nModels saved to: {args.save_dir}")
-        print(f"TensorBoard logs: {args.log_dir}")
-        print(f"Run 'tensorboard --logdir {args.log_dir}' to view training curves")
+        elapsed = (datetime.now() - self.start_time).total_seconds()
         
-        # Close resources
-        writer.close()
-        env.close()
+        log_msg = (f"Episode: {episode:5d} | "
+                  f"Score: {score:3d} | "
+                  f"Reward: {reward:7.2f} | "
+                  f"Steps: {steps:4d} | "
+                  f"Avg Score (100): {avg_score:5.2f} | "
+                  f"Avg Reward (100): {avg_reward:7.2f} | "
+                  f"Time: {elapsed:.1f}s")
+        
+        if reason:
+            log_msg += f" | End: {reason}"
+        
+        print(log_msg)
+        
+        # Log to file
+        with open("training_log.txt", "a") as f:
+            f.write(log_msg + "\n")
+    
+    def train(self):
+        """Main training loop"""
+        print("=" * 80)
+        print("Starting Snake RL Training with PPO")
+        print("=" * 80)
+        print(f"Max Episodes: {self.max_episodes}")
+        print(f"Update Timestep: {self.update_timestep}")
+        print(f"Save Interval: {self.save_interval}")
+        print(f"Render Mode: {self.render}")
+        print("=" * 80)
+        print("\nPress Ctrl+C to stop training and save model\n")
+        
+        # Clear previous log
+        with open("training_log.txt", "w") as f:
+            f.write(f"Training started at {self.start_time}\n")
+            f.write("=" * 80 + "\n")
+        
+        for episode in range(1, self.max_episodes + 1):
+            if self.should_exit:
+                break
+            
+            state = self.env.reset()
+            episode_reward = 0
+            steps = 0
+            done = False
+            end_reason = ""
+            
+            while not done and not self.should_exit:
+                # Select action
+                action = self.agent.select_action(state)
+                
+                # Take action
+                next_state, reward, done, info = self.env.step(action)
+                
+                # Store transition
+                self.agent.store_transition(reward, done)
+                
+                # Update state and stats
+                state = next_state
+                episode_reward += reward
+                steps += 1
+                self.timestep += 1
+                
+                # Render if enabled
+                if self.render:
+                    self.env.render()
+                
+                # Update policy
+                if self.timestep % self.update_timestep == 0:
+                    self.agent.update()
+                
+                if done:
+                    end_reason = info.get("reason", "")
+            
+            # Store episode stats
+            score = info.get("score", 0)
+            self.episode_rewards.append(episode_reward)
+            self.episode_scores.append(score)
+            
+            # Log episode
+            self.log_episode(episode, score, episode_reward, steps, end_reason)
+            
+            # Save model periodically
+            if episode % self.save_interval == 0:
+                self.save_model(episode)
+            
+            # Check for exit signal
+            if self.should_exit:
+                break
+        
+        # Final save
+        print("\n" + "=" * 80)
+        print("Training completed or interrupted")
+        print("=" * 80)
+        self.save_model(episode, prefix="final")
+        
+        # Print final statistics
+        if self.episode_scores:
+            print(f"\nFinal Statistics:")
+            print(f"Total Episodes: {len(self.episode_scores)}")
+            print(f"Average Score: {np.mean(self.episode_scores):.2f}")
+            print(f"Max Score: {np.max(self.episode_scores)}")
+            print(f"Average Reward: {np.mean(self.episode_rewards):.2f}")
+            print(f"Total Time: {(datetime.now() - self.start_time).total_seconds():.1f}s")
+        
+        # Close environment
+        self.env.close()
+        print("\nExiting gracefully. Model saved.")
 
 
 def main():
-    args = parse_args()
-    train(args)
+    parser = argparse.ArgumentParser(description="Train Snake RL agent with PPO")
+    parser.add_argument("--render", action="store_true", 
+                       help="Render the game during training")
+    parser.add_argument("--load", type=str, default=None,
+                       help="Path to model checkpoint to load")
+    parser.add_argument("--episodes", type=int, default=10000,
+                       help="Maximum number of episodes to train")
+    parser.add_argument("--update-timestep", type=int, default=2000,
+                       help="Update policy every N timesteps")
+    parser.add_argument("--save-interval", type=int, default=100,
+                       help="Save model every N episodes")
+    
+    args = parser.parse_args()
+    
+    # Create and run trainer
+    trainer = Trainer(
+        render=args.render,
+        load_model=args.load,
+        max_episodes=args.episodes,
+        update_timestep=args.update_timestep,
+        save_interval=args.save_interval
+    )
+    
+    trainer.train()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
 
