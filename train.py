@@ -13,10 +13,10 @@ class Trainer:
     """Main training class with logging and graceful shutdown"""
     
     def __init__(self, render=False, load_model=None, max_episodes=10000, 
-                 update_timestep=2000, save_interval=100):
+                 update_frequency=10, save_interval=100):
         self.render = render
         self.max_episodes = max_episodes
-        self.update_timestep = update_timestep
+        self.update_frequency = update_frequency  # Update every N episodes
         self.save_interval = save_interval
         self.should_exit = False
         
@@ -30,10 +30,18 @@ class Trainer:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Using device: {self.device}")
         
-        # Create agent
+        # Create agent with better hyperparameters for Snake
         state_dim = self.env.observation_space
         action_dim = self.env.action_space
-        self.agent = PPOAgent(state_dim, action_dim, device=self.device)
+        self.agent = PPOAgent(
+            state_dim, 
+            action_dim, 
+            lr=1e-4,  # Lower learning rate for more stable learning
+            gamma=0.95,  # Lower gamma since episodes are short
+            eps_clip=0.2,
+            k_epochs=10,  # More epochs for better learning
+            device=self.device
+        )
         
         # Load model if specified
         if load_model:
@@ -50,6 +58,7 @@ class Trainer:
         self.episode_rewards = []
         self.episode_scores = []
         self.timestep = 0
+        self.episode_count = 0
         self.start_time = datetime.now()
     
     def signal_handler(self, sig, frame):
@@ -96,7 +105,7 @@ class Trainer:
         print("Starting Snake RL Training with PPO")
         print("=" * 80)
         print(f"Max Episodes: {self.max_episodes}")
-        print(f"Update Timestep: {self.update_timestep}")
+        print(f"Update Frequency: Every {self.update_frequency} episodes")
         print(f"Save Interval: {self.save_interval}")
         print(f"Render Mode: {self.render}")
         print("=" * 80)
@@ -137,10 +146,6 @@ class Trainer:
                 if self.render:
                     self.env.render()
                 
-                # Update policy
-                if self.timestep % self.update_timestep == 0:
-                    self.agent.update()
-                
                 if done:
                     end_reason = info.get("reason", "")
             
@@ -148,6 +153,11 @@ class Trainer:
             score = info.get("score", 0)
             self.episode_rewards.append(episode_reward)
             self.episode_scores.append(score)
+            self.episode_count += 1
+            
+            # Update policy after collecting N episodes
+            if self.episode_count % self.update_frequency == 0:
+                self.agent.update()
             
             # Log episode
             self.log_episode(episode, score, episode_reward, steps, end_reason)
@@ -188,8 +198,8 @@ def main():
                        help="Path to model checkpoint to load")
     parser.add_argument("--episodes", type=int, default=10000,
                        help="Maximum number of episodes to train")
-    parser.add_argument("--update-timestep", type=int, default=2000,
-                       help="Update policy every N timesteps")
+    parser.add_argument("--update-frequency", type=int, default=10,
+                       help="Update policy every N episodes")
     parser.add_argument("--save-interval", type=int, default=100,
                        help="Save model every N episodes")
     
@@ -200,7 +210,7 @@ def main():
         render=args.render,
         load_model=args.load,
         max_episodes=args.episodes,
-        update_timestep=args.update_timestep,
+        update_frequency=args.update_frequency,
         save_interval=args.save_interval
     )
     

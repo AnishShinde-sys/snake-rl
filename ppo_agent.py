@@ -53,8 +53,8 @@ class ActorCritic(nn.Module):
 class PPOAgent:
     """PPO Agent for training"""
     
-    def __init__(self, state_dim, action_dim, lr=3e-4, gamma=0.99, 
-                 eps_clip=0.2, k_epochs=4, device='cpu'):
+    def __init__(self, state_dim, action_dim, lr=1e-4, gamma=0.95, 
+                 eps_clip=0.2, k_epochs=10, device='cpu'):
         self.gamma = gamma
         self.eps_clip = eps_clip
         self.k_epochs = k_epochs
@@ -104,10 +104,8 @@ class PPOAgent:
             discounted_reward = reward + (self.gamma * discounted_reward)
             rewards.insert(0, discounted_reward)
         
-        # Normalizing the rewards
+        # Convert rewards to tensor
         rewards = torch.tensor(rewards, dtype=torch.float32).to(self.device)
-        if len(rewards) > 1:
-            rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
         
         # Convert list to tensor
         old_states = torch.stack(self.states).detach()
@@ -115,8 +113,12 @@ class PPOAgent:
         old_logprobs = torch.stack(self.logprobs).detach()
         old_state_values = torch.stack(self.state_values).squeeze().detach()
         
-        # Calculate advantages
+        # Calculate advantages (GAE would be better, but this is simpler)
         advantages = rewards - old_state_values
+        
+        # Normalize advantages (not rewards) for better stability
+        if len(advantages) > 1:
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-7)
         
         # Optimize policy for K epochs
         for _ in range(self.k_epochs):
@@ -134,7 +136,12 @@ class PPOAgent:
             surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
             
             # Final loss of clipped objective PPO
-            loss = -torch.min(surr1, surr2) + 0.5 * self.mse_loss(state_values.squeeze(), rewards) - 0.01 * dist_entropy
+            # Use rewards (not normalized) for value loss, advantages (normalized) for policy loss
+            value_loss = self.mse_loss(state_values.squeeze(), rewards)
+            policy_loss = -torch.min(surr1, surr2).mean()
+            entropy_loss = -dist_entropy.mean()
+            
+            loss = policy_loss + 0.5 * value_loss + 0.01 * entropy_loss
             
             # Take gradient step
             self.optimizer.zero_grad()
