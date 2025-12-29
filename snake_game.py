@@ -1,6 +1,6 @@
 """
-Simple Snake Game - 10x10 Grid
-Can be played standalone or used by the RL environment
+Snake Game - 10x10 Grid
+Adapted for RL environment with relative actions (STRAIGHT, RIGHT, LEFT)
 """
 import pygame
 import random
@@ -9,15 +9,15 @@ from collections import deque
 
 # Constants
 GRID_SIZE = 10
-CELL_SIZE = 40
+CELL_SIZE = 50
 WINDOW_SIZE = GRID_SIZE * CELL_SIZE
 
 # Colors
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
-GREEN = (0, 200, 0)
-DARK_GREEN = (0, 150, 0)
-RED = (200, 0, 0)
+RED = (255, 0, 0)
+GREEN = (0, 255, 0)
+DARK_GREEN = (0, 200, 0)
 GRAY = (40, 40, 40)
 
 
@@ -48,6 +48,8 @@ class SnakeGame:
         center = self.grid_size // 2
         self.snake = deque([(center, center)])
         self.direction = Direction.RIGHT
+        self.dirnx = 1
+        self.dirny = 0
         self.food = None
         self.spawn_food()
         self.score = 0
@@ -126,17 +128,19 @@ class SnakeGame:
             self.direction = turn_left[self.direction]
         # action == 0: continue straight, no direction change
         
+        # Update direction vectors
+        if self.direction == Direction.UP:
+            self.dirnx, self.dirny = 0, -1
+        elif self.direction == Direction.DOWN:
+            self.dirnx, self.dirny = 0, 1
+        elif self.direction == Direction.LEFT:
+            self.dirnx, self.dirny = -1, 0
+        else:  # RIGHT
+            self.dirnx, self.dirny = 1, 0
+        
         # Calculate new head position
         head_x, head_y = self.snake[0]
-        
-        if self.direction == Direction.UP:
-            new_head = (head_x, head_y - 1)
-        elif self.direction == Direction.DOWN:
-            new_head = (head_x, head_y + 1)
-        elif self.direction == Direction.LEFT:
-            new_head = (head_x - 1, head_y)
-        else:  # RIGHT
-            new_head = (head_x + 1, head_y)
+        new_head = (head_x + self.dirnx, head_y + self.dirny)
         
         # Check for collisions
         reward = 0
@@ -151,7 +155,6 @@ class SnakeGame:
             return self.get_state(), reward, done, {'score': self.score, 'reason': 'wall'}
         
         # Self collision (check against body, excluding tail which will move)
-        # We need to check all body parts except the tail if we're not eating
         will_eat = new_head == self.food
         snake_body = list(self.snake)
         if not will_eat and len(snake_body) > 1:
@@ -211,17 +214,38 @@ class SnakeGame:
         
         # Draw snake
         for i, (x, y) in enumerate(self.snake):
-            color = GREEN if i == 0 else DARK_GREEN
             rect = pygame.Rect(x * CELL_SIZE + 1, y * CELL_SIZE + 1, 
                               CELL_SIZE - 2, CELL_SIZE - 2)
-            pygame.draw.rect(self.screen, color, rect)
+            if i == 0:
+                # Head - red with eyes
+                pygame.draw.rect(self.screen, RED, rect)
+                # Draw eyes based on direction
+                center = CELL_SIZE // 2
+                radius = 3
+                if self.direction == Direction.RIGHT:
+                    eye1 = (x * CELL_SIZE + CELL_SIZE - 10, y * CELL_SIZE + 10)
+                    eye2 = (x * CELL_SIZE + CELL_SIZE - 10, y * CELL_SIZE + CELL_SIZE - 10)
+                elif self.direction == Direction.LEFT:
+                    eye1 = (x * CELL_SIZE + 10, y * CELL_SIZE + 10)
+                    eye2 = (x * CELL_SIZE + 10, y * CELL_SIZE + CELL_SIZE - 10)
+                elif self.direction == Direction.UP:
+                    eye1 = (x * CELL_SIZE + 10, y * CELL_SIZE + 10)
+                    eye2 = (x * CELL_SIZE + CELL_SIZE - 10, y * CELL_SIZE + 10)
+                else:  # DOWN
+                    eye1 = (x * CELL_SIZE + 10, y * CELL_SIZE + CELL_SIZE - 10)
+                    eye2 = (x * CELL_SIZE + CELL_SIZE - 10, y * CELL_SIZE + CELL_SIZE - 10)
+                pygame.draw.circle(self.screen, BLACK, eye1, radius)
+                pygame.draw.circle(self.screen, BLACK, eye2, radius)
+            else:
+                # Body - darker red
+                pygame.draw.rect(self.screen, (180, 0, 0), rect)
         
-        # Draw food
+        # Draw food (green)
         if self.food:
             fx, fy = self.food
             rect = pygame.Rect(fx * CELL_SIZE + 1, fy * CELL_SIZE + 1, 
                               CELL_SIZE - 2, CELL_SIZE - 2)
-            pygame.draw.rect(self.screen, RED, rect)
+            pygame.draw.rect(self.screen, GREEN, rect)
         
         # Draw score
         score_text = self.font.render(f'Score: {self.score}', True, WHITE)
@@ -289,4 +313,3 @@ def play_manual():
 
 if __name__ == '__main__':
     play_manual()
-
