@@ -2,6 +2,7 @@ import argparse
 import signal
 import sys
 import os
+import glob
 import torch
 import numpy as np
 from datetime import datetime
@@ -36,10 +37,10 @@ class Trainer:
         self.agent = PPOAgent(
             state_dim, 
             action_dim, 
-            lr=1e-4,  # Lower learning rate for more stable learning
-            gamma=0.95,  # Lower gamma since episodes are short
+            lr=3e-3,  # Higher learning rate for faster learning
+            gamma=0.9,  # Lower gamma for faster credit assignment
             eps_clip=0.2,
-            k_epochs=10,  # More epochs for better learning
+            k_epochs=4,  # Fewer epochs to avoid overfitting
             device=self.device
         )
         
@@ -54,6 +55,10 @@ class Trainer:
         # Create checkpoint directory
         os.makedirs("checkpoints", exist_ok=True)
         
+        # Determine run number (find highest existing run and increment)
+        self.run_number = self._get_next_run_number()
+        print(f"Starting Run #{self.run_number:03d}")
+        
         # Training stats
         self.episode_rewards = []
         self.episode_scores = []
@@ -61,14 +66,40 @@ class Trainer:
         self.episode_count = 0
         self.start_time = datetime.now()
     
+    def _get_next_run_number(self):
+        """Find the next available run number"""
+        existing_runs = glob.glob("checkpoints/run_*_*.pt")
+        if not existing_runs:
+            return 1
+        
+        # Extract run numbers from filenames
+        run_numbers = []
+        for f in existing_runs:
+            basename = os.path.basename(f)
+            try:
+                # Format: run_XXX_episode_YYYY.pt or run_XXX_final.pt
+                parts = basename.split('_')
+                if len(parts) >= 2:
+                    run_num = int(parts[1])
+                    run_numbers.append(run_num)
+            except (ValueError, IndexError):
+                continue
+        
+        if run_numbers:
+            return max(run_numbers) + 1
+        return 1
+    
     def signal_handler(self, sig, frame):
         """Handle SIGINT (Ctrl+C) for graceful shutdown"""
         print("\n\n[SIGINT] Received interrupt signal. Saving model and exiting gracefully...")
         self.should_exit = True
     
-    def save_model(self, episode, prefix="episode"):
-        """Save model checkpoint"""
-        filepath = f"checkpoints/{prefix}_{episode}.pt"
+    def save_model(self, episode, is_final=False):
+        """Save model checkpoint with run number"""
+        if is_final:
+            filepath = f"checkpoints/run_{self.run_number:03d}_final.pt"
+        else:
+            filepath = f"checkpoints/run_{self.run_number:03d}_episode_{episode}.pt"
         self.agent.save(filepath)
         # Also save as latest
         latest_path = "checkpoints/latest_model.pt"
@@ -79,19 +110,18 @@ class Trainer:
         """Log episode statistics"""
         avg_reward = np.mean(self.episode_rewards[-100:]) if self.episode_rewards else 0
         avg_score = np.mean(self.episode_scores[-100:]) if self.episode_scores else 0
+        max_score = max(self.episode_scores) if self.episode_scores else 0
         
         elapsed = (datetime.now() - self.start_time).total_seconds()
         
         log_msg = (f"Episode: {episode:5d} | "
                   f"Score: {score:3d} | "
-                  f"Reward: {reward:7.2f} | "
-                  f"Steps: {steps:4d} | "
-                  f"Avg Score (100): {avg_score:5.2f} | "
-                  f"Avg Reward (100): {avg_reward:7.2f} | "
+                  f"Max: {max_score:3d} | "
+                  f"Avg (100): {avg_score:5.2f} | "
                   f"Time: {elapsed:.1f}s")
         
         if reason:
-            log_msg += f" | End: {reason}"
+            log_msg += f" | {reason}"
         
         print(log_msg)
         
@@ -127,8 +157,11 @@ class Trainer:
             end_reason = ""
             
             while not done and not self.should_exit:
-                # Select action
-                action = self.agent.select_action(state)
+                # Get action mask (safe actions) from environment
+                action_mask = self.env.get_action_mask()
+                
+                # Select action with mask - prevents obviously bad moves
+                action = self.agent.select_action(state, action_mask)
                 
                 # Take action
                 next_state, reward, done, info = self.env.step(action)
@@ -172,9 +205,9 @@ class Trainer:
         
         # Final save
         print("\n" + "=" * 80)
-        print("Training completed or interrupted")
+        print(f"Training completed or interrupted - Run #{self.run_number:03d}")
         print("=" * 80)
-        self.save_model(episode, prefix="final")
+        self.save_model(episode, is_final=True)
         
         # Print final statistics
         if self.episode_scores:
@@ -200,8 +233,8 @@ def main():
                        help="Maximum number of episodes to train")
     parser.add_argument("--update-frequency", type=int, default=10,
                        help="Update policy every N episodes")
-    parser.add_argument("--save-interval", type=int, default=100,
-                       help="Save model every N episodes")
+    parser.add_argument("--save-interval", type=int, default=1000,
+                       help="Save model every N episodes (milestones: 1000, 2000, etc.)")
     
     args = parser.parse_args()
     

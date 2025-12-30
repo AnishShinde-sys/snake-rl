@@ -8,12 +8,12 @@ from tkinter import messagebox
 width = 500
 height = 500
 
-cols = 10
-rows = 10
+cols = 25
+rows = 20
 
 
 class cube():
-    rows = 10
+    rows = 20
     w = 500
     def __init__(self, start, dirnx=1, dirny=0, color=(255,0,0)):
         self.pos = start
@@ -152,8 +152,8 @@ def randomSnack(rows, item):
     positions = item.body
 
     while True:
-        x = random.randrange(0,rows)
-        y = random.randrange(0,rows)
+        x = random.randrange(1,rows-1)
+        y = random.randrange(1,rows-1)
         if len(list(filter(lambda z:z.pos == (x,y), positions))) > 0:
                continue
         else:
@@ -165,7 +165,7 @@ def randomSnack(rows, item):
 def main():
     global s, snack, win
     win = pygame.display.set_mode((width,height))
-    s = snake((255,0,0), (5,5))
+    s = snake((255,0,0), (10,10))
     s.addCube()
     snack = cube(randomSnack(rows,s), color=(0,255,0))
     flag = True
@@ -176,9 +176,9 @@ def main():
         clock.tick(10)
         s.move()
         headPos = s.head.pos
-        if headPos[0] >= 10 or headPos[0] < 0 or headPos[1] >= 10 or headPos[1] < 0:
+        if headPos[0] >= 20 or headPos[0] < 0 or headPos[1] >= 20 or headPos[1] < 0:
             print("Score:", len(s.body))
-            s.reset((5, 5))
+            s.reset((10, 10))
 
         if s.body[0].pos == snack.pos:
             s.addCube()
@@ -187,13 +187,12 @@ def main():
         for x in range(len(s.body)):
             if s.body[x].pos in list(map(lambda z:z.pos,s.body[x+1:])):
                 print("Score:", len(s.body))
-                s.reset((5,5))
+                s.reset((10,10))
                 break
                     
         redrawWindow()
 
-if __name__ == "__main__":
-    main()
+main()
     
 
     
